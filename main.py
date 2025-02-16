@@ -5,9 +5,14 @@ import hikari
 import dataset
 import asyncio
 from easygoogletranslate import EasyGoogleTranslate
-from logging import info
-from yahoo import check_yahoo_auctions
-from mercari import check_mercari
+from logging import info, basicConfig, INFO
+from get import check_get_auctions
+
+basicConfig(
+    level=INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 dotenv.load_dotenv()
 
@@ -20,53 +25,51 @@ bot.d.synced = db["synced_alerts"]
 
 async def check_alerts() -> None:
     while True:
-        alerts = bot.d.table.all()
+        alerts = list(bot.d.table.all())
+        alert_count = len(alerts)
+        info(f"Starting alert check cycle. Found {alert_count} alerts to process.")
 
         for alert in alerts:
-            info(f"Searching for {alert['name']}...")
-            if os.getenv("ENABLE_YAHOO_AUCTION", "true") == "true":
+            info(f"Processing alert: '{alert['name']}' for user {alert['user_id']} in channel {alert['channel_id']}")
+            if os.getenv("ENABLE_GET_AUCTION", "true").lower() == "true":
                 try:
-                    await check_yahoo_auctions(bot, translator, alert)
+                    info(f"Starting search for '{alert['name']}'...")
+                    await check_get_auctions(bot, translator, alert)
                 except Exception as e:
-                    info(f"Error: {e}")
+                    info(f"Error processing alert '{alert['name']}': {str(e)}")
+                    info(f"Full error details: {repr(e)}")
+            else:
+                info("GET auction checking is disabled via ENABLE_GET_AUCTION environment variable")
 
-            if os.getenv("ENABLE_MERCARI", "true") == "true":
-                try:
-                    await check_mercari(bot, alert)
-                except Exception as e:
-                    info(f"Error: {e}")
-
-        info(
-            f"Done checking alerts. Sleeping for {os.getenv('CHECK_INTERVAL', 60)}s..."
-        )
-        await asyncio.sleep(int(os.getenv("CHECK_INTERVAL", 60)))
+        check_interval = int(os.getenv("CHECK_INTERVAL", 60))
+        info(f"Completed alert check cycle. Next check in {check_interval} seconds.")
+        await asyncio.sleep(check_interval)
 
 
 @bot.listen()
 async def on_ready(event: hikari.StartingEvent) -> None:
     info("Starting event loop...")
+    await bot.rest.edit_my_user(username="Yapper")
     asyncio.create_task(check_alerts())
 
 
 @bot.command
+@lightbulb.option("currency", "Currency for conversion (e.g. USD, EUR), defaults to JPY", required=False)
 @lightbulb.option("name", "Name of the item to register.", required=True)
-@lightbulb.command(
-    "register", "Register a new alert for a ZenMarket item.", pass_options=True
-)
+@lightbulb.command("register", "Register a new alert for a GET Auction item.", pass_options=True)
 @lightbulb.implements(lightbulb.SlashCommand)
-async def register(ctx: lightbulb.SlashContext, name: str) -> None:
+async def register(ctx: lightbulb.SlashContext, name: str, currency: str = "JPY") -> None:
     if any(True for _ in bot.d.table.find(name=name)):
         await ctx.respond(f"Alert for **{name}** already exists!")
         return
 
-    bot.d.table.insert(
-        {
-            "user_id": ctx.author.id,
-            "channel_id": ctx.channel_id,
-            "name": name,
-        }
-    )
-    await ctx.respond(f"Registered alert for **{name}**!")
+    bot.d.table.insert({
+        "user_id": ctx.author.id,
+        "channel_id": ctx.channel_id,
+        "name": name,
+        "currency": currency
+    })
+    await ctx.respond(f"Registered alert for **{name}** with currency {currency.upper()}!")
 
 
 @bot.command
@@ -92,11 +95,10 @@ async def alerts(ctx: lightbulb.SlashContext) -> None:
         return
 
     await ctx.respond("\n".join([f"{alert['name']}" for alert in alerts]) or "None")
-
-
+    
 if __name__ == "__main__":
     bot.run(
         activity=hikari.Activity(
-            name="ZenMarket items", type=hikari.ActivityType.WATCHING
+            name="GET Auction items", type=hikari.ActivityType.WATCHING
         )
     )
