@@ -63,6 +63,9 @@ async def register(ctx: lightbulb.SlashContext, name: str, currency: str = "JPY"
         await ctx.respond(f"Alert for **{name}** already exists!")
         return
 
+    # Use default JPY if currency is None
+    currency = currency or "JPY"
+
     bot.d.table.insert({
         "user_id": ctx.author.id,
         "channel_id": ctx.channel_id,
